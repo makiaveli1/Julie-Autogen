@@ -7,10 +7,12 @@ import re
 import logging
 import random
 import requests
+from autogen.code_utils import execute_code, generate_code
+
+
+
 
 from files.brain import LongTermMemory
-
-
 from files.setup import Setting
 
 logging.basicConfig(
@@ -45,6 +47,7 @@ class Julie:
             self.load_environment_variables()
             self.display_initial_message()
             self.simulate_startup()
+
             
             
         except KeyboardInterrupt:
@@ -128,10 +131,28 @@ class Julie:
             )
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
+            
+    def detect_intent(self, message):
+        """Detects the intent of a given message using keyword matching."""
+        web_search_keywords = ["search", "look up", "find", "google"]
+        
+        for keyword in web_search_keywords:
+            if keyword.lower() in message.lower():
+                return 'web_search'
+                
+        return 'general_conversation'
+    
+    def extract_query(self, message):
+        """Extracts the search query from the message."""
+        search_keywords = ["search for", "look up", "find", "google"]
+        
+        for keyword in search_keywords:
+            if keyword.lower() in message.lower():
+                return re.sub(f"{keyword.lower()}", "", message, flags=re.IGNORECASE).strip()
+                
+        return None
 
-    def generate_response(
-        self, prompt, username, temperature=0.5, max_tokens=4000
-    ):
+    def generate_response(self, prompt, username, temperature=0.5, max_tokens=4000):
         """
         This method generates a response for the given prompt and username.
         It uses the OpenAI API to generate the response.
@@ -149,56 +170,87 @@ class Julie:
             if not user_data:
                 user_data = {"conversation_history": []}
                 memory.set_user_data(username, user_data)
+
             # Append user's message to conversation history
-            user_data["conversation_history"].append(
-                {"role": "user", "content": prompt}
-            )
+            user_data["conversation_history"].append({"role": "user", "content": prompt})
 
             # Trim conversation history if it exceeds a certain limit
             if len(user_data["conversation_history"]) > 5000:
-                user_data["conversation_history"] = user_data[
-                    "conversation_history"
-                ][-5000:]
+                user_data["conversation_history"] = user_data["conversation_history"][-5000:]
+
             # Prepare the prompt and context
-            messages = self.prepare_advanced_prompt(
-                prompt, username, user_data
-            )
+            messages = self.prepare_advanced_prompt(prompt, username, user_data)
 
-            # Generate response using OpenAI API
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            # Determine the intent of the user's message
+            intent = self.detect_intent(prompt)  # Assuming you have this function
 
-            # Extract and log the response
-            chatbot_response = response["choices"][0]["message"][
-                "content"
-            ].strip()
-            logging.info(f"Generated response: {chatbot_response}")
+            if intent == 'web_search':
+                # Extract the search query from the user's message
+                query = self.extract_query(prompt)  # Assuming you have this function
+                print(f"Query extracted: {query}")
+                # Generate Python code for web browsing
+                generated_code, _ = generate_code(
+                    prompt=f"Write Python code to search the web for '{query}'.",
+                    model="gpt-4",
+                    max_tokens=100  # Adjust as needed
+                )
+                # Extract the Python code from the list-tuple structure
+                if generated_code and isinstance(generated_code, list):
+                    generated_code = generated_code[0][1]
+                
+                print(f"Generated Code: {generated_code}")  # Debug line
+                
+                # Execute the generated code
+                try:
+                    result_values = execute_code(code=generated_code, lang='python')
+                    if len(result_values) >= 2:
+                        result, _ = result_values[:2]
+                    else:
+                        result = result_values[0]
+                except AttributeError as ae:
+                    print("Attribute Error while executing code:", ae)
+                    result = "Error while executing code."
+                                
+                chatbot_response = f"Search results: {result}"
+            else:
+                # Generate response using OpenAI API
+                if intent == 'web_search':
+                    gpt_prompt = f"{prompt}\nWeb Search Results: {result}"
+                else:
+                    gpt_prompt = prompt
+
+                response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "user", "content": gpt_prompt},
+                        {"role": "assistant", "content": ""},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                chatbot_response = response["choices"][0]["message"]["content"].strip()
+
+                # Log the response
+                logging.info(f"Generated response: {chatbot_response}")
 
             # Update conversation history and user data
-            memory.update_conversation_history(
-                username, "assistant", chatbot_response
-            )
-            user_data["conversation_history"].append(
-                {"role": "assistant", "content": chatbot_response}
-            )
+            memory.update_conversation_history(username, "assistant", chatbot_response)
+            user_data["conversation_history"].append({"role": "assistant", "content": chatbot_response})
             memory.set_user_data(username, user_data)
 
             return chatbot_response
+
         except KeyboardInterrupt:
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
             logger.info("User interrupted the conversation.")
             return
-        except openai.Error as oe:
-            logging.error(f"OpenAI API error: {oe}")
         except redis.exceptions.RedisError as re:
             logging.error(f"Redis operation failed: {re}")
+            return
         except Exception as e:
             logging.error(f"Unexpected Error: {e}")
+            return
 
     def prepare_advanced_prompt(self, prompt, username, user_data):
         """
