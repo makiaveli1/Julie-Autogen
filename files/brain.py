@@ -32,7 +32,15 @@ class LongTermMemory:
             "properties": {"conversation_history": {"type": "array"}},
         }
         self.initialize_redis()
+        self.cache = {}
+    
+    def get_cached_response(self, prompt):
+        return self.cache.get(prompt)
 
+    def set_cached_response(self, prompt, response):
+        self.cache[prompt] = response
+        
+    
     def __new__(cls):
         """
         Create a new instance of the class if it doesn't exist, otherwise return the existing instance.
@@ -198,4 +206,3 @@ class LongTermMemory:
         except Exception as e:
             logging.error(f"Failed to connect to Redis: {e}")
             raise e
-

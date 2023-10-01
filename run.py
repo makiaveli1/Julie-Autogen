@@ -12,6 +12,7 @@ from termcolor import colored
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+logging.getLogger('interpreter').setLevel(logging.CRITICAL)
 
 Settings = Setting
 memory = LongTermMemory()

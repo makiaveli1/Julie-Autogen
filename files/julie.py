@@ -1,30 +1,39 @@
 import openai
 from dotenv import load_dotenv
 from termcolor import colored
+import sys
 import os
 import redis
 import re
 import logging
 import random
 import requests
-from autogen.code_utils import execute_code, generate_code
-
-
+import interpreter
 
 
 from files.brain import LongTermMemory
 from files.setup import Setting
 
+
+sys.stdout.reconfigure(encoding='utf-8')
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 logging.basicConfig(
     filename="chatbot.log",
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    encoding='utf-8'
 )
 logger = logging.getLogger(__name__)
 
+logging.getLogger('interpreter').setLevel(logging.CRITICAL)
+logging.getLogger('markdown_it').setLevel(logging.CRITICAL)
+
+
+
 
 class Julie:
-    
+
     """
     Julie is a chatbot class that interacts with the user.
     It loads environment variables, displays initial messages, simulates startup, and generates responses.
@@ -37,7 +46,6 @@ class Julie:
     sleep_time = 60 / (tokens_per_minute / tokens_per_request)
 
     def __init__(self):
-       
         """
         Constructor for the Julie class.
         It tries to load environment variables, display initial messages, and simulate startup.
@@ -48,8 +56,6 @@ class Julie:
             self.display_initial_message()
             self.simulate_startup()
 
-            
-            
         except KeyboardInterrupt:
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
@@ -131,36 +137,40 @@ class Julie:
             )
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
-            
+
     def detect_intent(self, message):
         """Detects the intent of a given message using keyword matching."""
         web_search_keywords = ["search", "look up", "find", "google"]
-        
+
         for keyword in web_search_keywords:
             if keyword.lower() in message.lower():
                 return 'web_search'
-                
+
         return 'general_conversation'
-    
+
     def extract_query(self, message):
         """Extracts the search query from the message."""
         search_keywords = ["search for", "look up", "find", "google"]
-        
+
         for keyword in search_keywords:
             if keyword.lower() in message.lower():
-                return re.sub(f"{keyword.lower()}", "", message, flags=re.IGNORECASE).strip()
-                
+                query = re.sub(f"{keyword.lower()}", "",
+                               message, flags=re.IGNORECASE).strip()
+                return ' '.join(query.split()[1:])
         return None
 
-    def generate_response(self, prompt, username, temperature=0.5, max_tokens=4000):
+    def generate_response(self, prompt, username):
         """
         This method generates a response for the given prompt and username.
-        It uses the OpenAI API to generate the response.
+        It uses the Open Interpreter API to generate the response.
         If any exception occurs, it logs the error and returns.
         """
-        try:
-            logging.info(f"Generating response for {username}...")
 
+        chatbot_response = "An unexpected error occurred."
+
+        logging.info(f"Generating response for {username}...")
+
+        try:
             # Initialize LongTermMemory and fetch user data
             memory = LongTermMemory()
             user_data = memory.get_user_data(username)
@@ -172,85 +182,37 @@ class Julie:
                 memory.set_user_data(username, user_data)
 
             # Append user's message to conversation history
-            user_data["conversation_history"].append({"role": "user", "content": prompt})
+            user_data["conversation_history"].append(
+                {"role": "user", "content": prompt})
 
-            # Trim conversation history if it exceeds a certain limit
-            if len(user_data["conversation_history"]) > 5000:
-                user_data["conversation_history"] = user_data["conversation_history"][-5000:]
-
-            # Prepare the prompt and context
-            messages = self.prepare_advanced_prompt(prompt, username, user_data)
-
-            # Determine the intent of the user's message
-            intent = self.detect_intent(prompt)  # Assuming you have this function
-
-            if intent == 'web_search':
-                # Extract the search query from the user's message
-                query = self.extract_query(prompt)  # Assuming you have this function
-                print(f"Query extracted: {query}")
-                # Generate Python code for web browsing
-                generated_code, _ = generate_code(
-                    prompt=f"Write Python code to search the web for '{query}'.",
-                    model="gpt-4",
-                    max_tokens=100  # Adjust as needed
-                )
-                # Extract the Python code from the list-tuple structure
-                if generated_code and isinstance(generated_code, list):
-                    generated_code = generated_code[0][1]
-                
-                print(f"Generated Code: {generated_code}")  # Debug line
-                
-                # Execute the generated code
-                try:
-                    result_values = execute_code(code=generated_code, lang='python')
-                    if len(result_values) >= 2:
-                        result, _ = result_values[:2]
-                    else:
-                        result = result_values[0]
-                except AttributeError as ae:
-                    print("Attribute Error while executing code:", ae)
-                    result = "Error while executing code."
-                                
-                chatbot_response = f"Search results: {result}"
+            # Check if the response is already cached
+            cached_response = memory.get_cached_response(prompt)
+            if cached_response:
+                chatbot_response = cached_response
             else:
-                # Generate response using OpenAI API
-                if intent == 'web_search':
-                    gpt_prompt = f"{prompt}\nWeb Search Results: {result}"
-                else:
-                    gpt_prompt = prompt
+                # Generate response using Open Interpreter API
+                for chunk in interpreter.chat(prompt, stream=True):
+                    # You can process the chunk as needed
+                    chatbot_response = chunk.get('message', 'No response')
 
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "user", "content": gpt_prompt},
-                        {"role": "assistant", "content": ""},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                chatbot_response = response["choices"][0]["message"]["content"].strip()
+                # Cache the response
+                memory.set_cached_response(prompt, chatbot_response)
 
-                # Log the response
-                logging.info(f"Generated response: {chatbot_response}")
+            # Log the response
+            logging.info(f"Generated response: {chatbot_response}")
 
             # Update conversation history and user data
-            memory.update_conversation_history(username, "assistant", chatbot_response)
-            user_data["conversation_history"].append({"role": "assistant", "content": chatbot_response})
+            memory.update_conversation_history(
+                username, "assistant", chatbot_response)
+            user_data["conversation_history"].append(
+                {"role": "assistant", "content": chatbot_response})
             memory.set_user_data(username, user_data)
 
-            return chatbot_response
-
-        except KeyboardInterrupt:
-            random_msg = random.choice(Setting.interrupt_messages)
-            Setting.simulate_typing(colored(random_msg, "red"))
-            logger.info("User interrupted the conversation.")
-            return
-        except redis.exceptions.RedisError as re:
-            logging.error(f"Redis operation failed: {re}")
-            return
         except Exception as e:
             logging.error(f"Unexpected Error: {e}")
-            return
+            chatbot_response = "I'm sorry, but I'm not sure what you mean. Can you please rephrase your question?"
+
+        return chatbot_response
 
     def prepare_advanced_prompt(self, prompt, username, user_data):
         """

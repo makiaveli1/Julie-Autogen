@@ -8,13 +8,16 @@ from termcolor import colored
 from files.setup import Setting
 import random
 
+
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
+
 
 def center_text(text):
     terminal_width = shutil.get_terminal_size().columns
     centered_text = text.center(terminal_width)
     return centered_text
+
 
 def display_menu_content(content):
     for title, description in content.items():
@@ -22,6 +25,7 @@ def display_menu_content(content):
         print(center_text("--------------------------------------------------"))
         for line in description:
             print(center_text(line))
+
 
 def display_help_menu():
     """
@@ -67,10 +71,10 @@ def display_help_menu():
         ],
     }
 
-
     for title, description in content.items():
         # Center-align each title
-        padding = (terminal_width - len(title) - 4) // 2  # 4 is for the 🌟 emojis
+        padding = (terminal_width - len(title) -
+                   4) // 2  # 4 is for the 🌟 emojis
         print("\n" + " " * padding + f"🌟 {title} 🌟")
 
         # Center-align the separator line
@@ -119,6 +123,7 @@ def settings_menu():
         print("Text color changed successfully!")
     clear_screen()
 
+
 def main_menu(Main_instance):
     clear_screen()  # Clear screen before displaying main menu
     option = prompt(
@@ -145,7 +150,3 @@ def main_menu(Main_instance):
     elif option == "Exit":
         clear_screen()
         exit()
-
-
-
-
