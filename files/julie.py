@@ -20,41 +20,6 @@ from files.brain import LongTermMemory
 from files.setup import Setting
 from files.code_creater import CodeCreator
 
-# Initialize spaCy
-nlp = spacy.load('en_core_web_sm')
-
-# Function Definitions Section
-
-
-# GPT-based Intent Detection
-def gpt_intent_detection(text):
-    try:
-        # GPT-based intent detection logic here
-        intent = 'some_intent_detected_by_GPT'
-        return intent
-    except Exception as e:
-        print(f'GPT-based intent detection failed: {e}')
-        return None
-
-# spaCy-based Intent Detection
-def spacy_intent_detection(text):
-    try:
-        # spaCy-based intent detection logic here
-        intent = 'some_intent_detected_by_spaCy'
-        return intent
-    except Exception as e:
-        print(f'spaCy-based intent detection failed: {e}')
-        return None
-
-# Main Intent Detection function using GPT and spaCy
-def main_intent_detection(text):
-    intent = gpt_intent_detection(text)
-    if intent is None:
-        print('Using spaCy as a fallback for intent detection.')
-        intent = spacy_intent_detection(text)
-    return intent
-
-
 
 nlp = spacy.load("en_core_web_sm")
 matcher = Matcher(nlp.vocab)
@@ -74,12 +39,44 @@ logger = logging.getLogger(__name__)
 logging.getLogger('interpreter').setLevel(logging.CRITICAL)
 logging.getLogger('markdown_it').setLevel(logging.CRITICAL)
 # Define patterns
-web_search_pattern = [{"LEMMA": "search"}, {"POS": "NOUN"}]
-code_execute_pattern = [{"LEMMA": "run"}, {"LOWER": "code"}]
-# Add patterns to matcher
-matcher.add("WEB_SEARCH", [web_search_pattern])
-matcher.add("CODE_EXECUTE", [code_execute_pattern])
+web_search_patterns = [
+    [{"LEMMA": "look"}, {"LOWER": "up"}],
+    [{"LEMMA": "find"}, {"LEMMA": "information"}, {"LOWER": "on"}],
+    [{"LEMMA": "can"}, {"LEMMA": "you"}, {"LEMMA": "search"}, {"LOWER": "for"}],
+    [{"LEMMA": "want"}, {"LEMMA": "to"}, {"LEMMA": "know"}, {"LOWER": "about"}],
+    [{"LEMMA": "tell"}, {"LEMMA": "me"}, {"LOWER": "about"}],
+    [{"LEMMA": "search"}, {"LEMMA": "the"}, {"LEMMA": "web"}, {"LOWER": "for"}],
+    [{"LEMMA": "google"}],
+    [{"LEMMA": "what"}, {"LEMMA": "do"}, {"LEMMA": "you"},
+        {"LEMMA": "know"}, {"LOWER": "about"}],
+    [{"LEMMA": "find"}, {"LEMMA": "me"}, {"LEMMA": "details"}, {"LOWER": "about"}],
+    [{"LEMMA": "investigate"}]
+]
 
+code_execute_patterns = [
+    [{"LEMMA": "execute"}, {"LEMMA": "this"}, {"LEMMA": "code"}],
+    [{"LEMMA": "can"}, {"LEMMA": "you"}, {"LEMMA": "run"},
+        {"LEMMA": "this"}, {"LEMMA": "script"}],
+    [{"LEMMA": "please"}, {"LEMMA": "compile"}, {"LEMMA": "this"}],
+    [{"LEMMA": "test"}, {"LEMMA": "this"}, {
+        "LEMMA": "code"}, {"LEMMA": "for"}, {"LEMMA": "me"}],
+    [{"LEMMA": "want"}, {"LEMMA": "to"}, {"LEMMA": "see"}, {"LEMMA": "the"}, {
+        "LEMMA": "output"}, {"LEMMA": "of"}, {"LEMMA": "this"}, {"LEMMA": "code"}],
+    [{"LEMMA": "run"}, {"LEMMA": "this"}, {"LEMMA": "function"}],
+    [{"LEMMA": "execute"}, {"LEMMA": "the"}, {
+        "LEMMA": "following"}, {"LEMMA": "lines"}],
+    [{"LEMMA": "can"}, {"LEMMA": "you"}, {"LEMMA": "debug"},
+        {"LEMMA": "this"}, {"LEMMA": "code"}],
+    [{"LEMMA": "compile"}, {"LEMMA": "and"}, {"LEMMA": "run"}, {"LEMMA": "this"}],
+    [{"LEMMA": "check"}, {"LEMMA": "if"}, {"LEMMA": "this"},
+        {"LEMMA": "code"}, {"LEMMA": "works"}]
+]
+# Add patterns to matcher
+for pattern in web_search_patterns:
+    matcher.add("WEB_SEARCH", [pattern])
+
+for pattern in code_execute_patterns:
+    matcher.add("CODE_EXECUTE", [pattern])
 language_keywords = {
     "python": ["def", "import", "print", "return", "class"],
     "javascript": ["function", "var", "let", "const", "return"],
@@ -98,6 +95,7 @@ class TrieNode:
         self.is_end_of_word = False
 
 # Trie class
+
 
 class Trie:
     def __init__(self):
@@ -136,6 +134,7 @@ class Julie:
     tokens_per_request = 200  # OpenAI's rate limit per request
     # Time to sleep between requests
     sleep_time = 60 / (tokens_per_minute / tokens_per_request)
+    known_intents = ["code_execution", "web_search", "general_conversation"]
 
     def __init__(self):
         """
@@ -241,17 +240,6 @@ class Julie:
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
 
-    def detect_intent(self, message):
-        doc = nlp(message)
-        matches = matcher(doc)
-        for match_id, start, end in matches:
-            string_id = nlp.vocab.strings[match_id]
-            span = doc[start:end]
-            if string_id == "WEB_SEARCH":
-                return "web_search"
-            elif string_id == "CODE_EXECUTE":
-                return "code_execution"
-        return "general_conversation"
 
     def extract_query(self, message):
         """Extracts the search query from the message."""
@@ -269,38 +257,37 @@ class Julie:
             type(e).__name__, ["Unknown Error"]
         ))
 
-    def detect_language(self, code):
-        detected_language = None
-        max_count = 0
 
-        for language, trie in self.language_tries.items():
-            count = trie.search(code.lower())
-            if count > max_count:
-                max_count = count
-                detected_language = language
-
-        return detected_language
 
     def generate_response(self, prompt, username, temperature=0.7, max_tokens=4000):
         try:
-            logging.info(f"Entered generate_response with prompt: {prompt}, username: {username}")
+            logging.info(
+                f"Entered generate_response with prompt: {prompt}, username: {username}")
             # Initialize LongTermMemory and fetch user data
             memory = LongTermMemory()
             user_data = memory.get_user_data(username)
             memory.update_conversation_history(username, "user", prompt)
-            intermediate_response = None 
+            intermediate_response = None
 
-            intent = self.detect_intent_with_gpt(prompt)
+            intent = Julie.detect_intent_with_gpt(prompt)
             print(f"Detected intent: {intent}")
-            language = self.detect_language(prompt) if intent == "code_execution" else None
+            language = self.detect_language(
+                prompt) if intent == "code_execution" or intent == "web_search" else None
             print(f"Detected language: {language}")
-            if intent == "code_execution":
-                generated_code = self.code_creator.generate_code(intent, language)
+            if intent == "code_execution" or intent == "web_search":
+                print("About to generate code...")
+                generated_code = self.code_creator.generate_code(
+                    intent, language)
                 print(f"Generated Code: {generated_code}")
 
+                print("About to create code interpreter...")
                 code_interpreter = create_code_interpreter(language)
+                print("Code interpreter created.")
+                print("About to run code...")
                 for output in code_interpreter.run(generated_code):
+                    print("Code running...")
                     intermediate_response = output.get('output', 'No response')
+                    print(f"Output: {output}")
 
             if intermediate_response:
                 print(f"Intermediate Response: {intermediate_response}")
@@ -312,19 +299,20 @@ class Julie:
                 user_data = {"conversation_history": []}
                 memory.set_user_data(username, user_data)
 
-            user_data["conversation_history"].append({"role": "user", "content": prompt})
+            user_data["conversation_history"].append(
+                {"role": "user", "content": prompt})
 
             if len(user_data["conversation_history"]) > 5000:
                 user_data["conversation_history"] = user_data["conversation_history"][-5000:]
 
             print(f"Intermediate Response: {intermediate_response}")
-            messages = self.prepare_advanced_prompt(prompt, username, user_data)
+            messages = self.prepare_advanced_prompt(
+                prompt, username, user_data)
 
             cached_response = memory.get_cached_response(prompt)
             if cached_response:
                 chatbot_response = cached_response
             else:
-                print(f"Messages to GPT-4: {messages}")
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=messages,
@@ -332,14 +320,17 @@ class Julie:
                     temperature=temperature,
                 )
 
-                chatbot_response = response["choices"][0]["message"]["content"].strip()
+                chatbot_response = response["choices"][0]["message"]["content"].strip(
+                )
                 logging.info(f"Generated response: {chatbot_response}")
                 memory.set_cached_response(prompt, chatbot_response)
 
             logging.info(f"Generated response: {chatbot_response}")
 
-            memory.update_conversation_history(username, "assistant", chatbot_response)
-            user_data["conversation_history"].append({"role": "assistant", "content": chatbot_response})
+            memory.update_conversation_history(
+                username, "assistant", chatbot_response)
+            user_data["conversation_history"].append(
+                {"role": "assistant", "content": chatbot_response})
             memory.set_user_data(username, user_data)
 
         except Exception as e:
@@ -352,8 +343,8 @@ class Julie:
             logging.info("Exiting generate_response")
 
         return chatbot_response
-
-    def detect_intent_with_gpt(self, text):
+    
+    def detect_intent_with_gpt(text):
         prompt = f"What is the intent of the following user input: '{text}'?"
         response = openai.Completion.create(
             engine="text-davinci-002",
@@ -362,7 +353,46 @@ class Julie:
         )
         intent = response.choices[0].text.strip()
         return intent
+    
+    def detect_intent(self, message):
+        doc = nlp(message)
+        matches = matcher(doc)
+        for match_id, start, end in matches:
+            string_id = nlp.vocab.strings[match_id]
+            span = doc[start:end]
+            if string_id == "WEB_SEARCH":
+                return "web_search"
+            elif string_id == "CODE_EXECUTE":
+                return "code_execution"
+        return "general_conversation"
+    
+    def detect_language(self, code):
+        detected_language = None
+        max_count = 0
 
+        for language, trie in self.language_tries.items():
+            count = trie.search(code.lower())
+            if count > max_count:
+                max_count = count
+                detected_language = language
+
+        return detected_language
+
+
+    def main_intent_detection(self, text):
+        intent = self.detect_intent_with_gpt(text)
+        print(f"GPT Detected Intent: {intent}")  # Debug line
+        
+        # Map verbose GPT intent to a known intent
+        if "write a code" in intent or "check the weather" in intent:
+            intent = "code_execution"
+        
+        if intent not in self.known_intents:
+            print('Using spaCy as a fallback for intent detection.')
+            intent = self.detect_intent(text)
+            print(f"spaCy Detected Intent: {intent}")  # Debug line
+        
+        return intent
 
     def prepare_advanced_prompt(self, prompt, username, user_data):
         """
@@ -406,5 +436,3 @@ class Julie:
             logger.exception(
                 "An error occurred while preparing the advanced prompt."
             )
-
-
