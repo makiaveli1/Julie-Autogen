@@ -17,6 +17,7 @@ logging.getLogger('interpreter').setLevel(logging.CRITICAL)
 Settings = Setting
 memory = LongTermMemory()
 
+
 class Main:
 
     def __init__(self):
@@ -30,7 +31,6 @@ class Main:
             main_menu(Main_instance=self)
         except Exception as e:
             logging.error(f"An error occurred in run: {e}")
-
 
     def chat(self, username):
         try:
@@ -47,14 +47,12 @@ class Main:
                     return
                 if user_input in ["exit", "bye", "quit", "goodbye", "sayonara"]:
                     return main_menu(main_instance=self)
-                self.respond_to_user(user_input, username)  # Call the response generation method here
+                # Call the response generation method here
+                self.respond_to_user(user_input, username)
         except KeyboardInterrupt as e:
             random_msg = random.choice(Setting.interrupt_messages)
             Setting.simulate_typing(colored(random_msg, "red"))
             logging.info("User interrupted the conversation.")
-
-
-
 
     def get_user_choice(self):
         """
@@ -136,12 +134,12 @@ class Main:
             except Exception as e:
                 logging.error(f"Failed to get user input: {e}")
                 attempts += 1  # Increment the number of failed attempts
-                
+
                 # Exit loop after 3 failed attempts
                 if attempts >= 3:
-                    logging.error("Too many failed attempts to get user input.")
+                    logging.error(
+                        "Too many failed attempts to get user input.")
                     break
-
 
     def respond_to_user(self, user_input, username):
         """
