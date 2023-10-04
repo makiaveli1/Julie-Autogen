@@ -6,6 +6,7 @@ from files.brain import LongTermMemory
 import click
 import logging
 import re
+import os
 import random
 from termcolor import colored
 
