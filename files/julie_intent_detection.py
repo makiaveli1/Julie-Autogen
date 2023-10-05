@@ -1,7 +1,10 @@
 import spacy
 from spacy.matcher import Matcher
 import openai
-from files.brain import LongTermMemory
+from files.trie import Trie, language_keywords  
+
+
+
 
 nlp = spacy.load("en_core_web_sm")
 matcher = Matcher(nlp.vocab)
@@ -54,8 +57,28 @@ def detect_intent_with_gpt(text):
         prompt=prompt,
         max_tokens=50
     )
-    intent = response.choices[0].text.strip()
-    return intent
+    verbose_intent = response.choices[0].text.strip().lower()
+    
+    # Map verbose intent to simple label
+    if "weather" in verbose_intent:
+        return "weather_check"
+    elif "code" in verbose_intent and "execute" in verbose_intent:
+        return "code_execution"
+    elif "search" in verbose_intent or "find" in verbose_intent:
+        return "web_search"
+    elif "question" in verbose_intent and "answer" in verbose_intent:
+        return "qa"
+    elif "music" in verbose_intent:
+        return "play_music"
+    elif "reminder" in verbose_intent or "alarm" in verbose_intent:
+        return "set_reminder"
+    elif "translate" in verbose_intent:
+        return "translation"
+    elif "directions" in verbose_intent or "navigate" in verbose_intent:
+        return "get_directions"
+    else:
+        return "general_conversation"
+
 
 def detect_intent(message):
     doc = nlp(message)
@@ -69,20 +92,42 @@ def detect_intent(message):
             return "code_execution"
     return "general_conversation"
 
-def detect_language(self, code):
+
+language_tries = {}
+for language, keywords in language_keywords.items():
+    trie = Trie()
+    for keyword in keywords:
+        trie.insert(keyword)
+    language_tries[language] = trie
+    
+    
+def detect_language(code):
+    print("Debug: Starting language detection")
     detected_language = None
     max_count = 0
 
-    for language, trie in self.language_tries.items():
+    for language, trie in language_tries.items():
         count = trie.search(code.lower())
+        print(f"Debug: Count for {language} is {count}")
+        
         if count > max_count:
             max_count = count
             detected_language = language
 
+    print(f"Debug: Detected language is {detected_language}")
     return detected_language
+
+
+
 
 def main_intent_detection(text):
     intent = detect_intent_with_gpt(text)
+    detected_language = None  # Initialize to None
+    
     if intent not in ["code_execution", "web_search", "general_conversation"]:
         intent = detect_intent(text)
-    return intent
+        
+    if intent in ["code_execution", "web_search"]:
+        detected_language = detect_language(text)
+        
+    return intent, detected_language

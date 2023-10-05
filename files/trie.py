@@ -42,3 +42,4 @@ class Trie:
             else:
                 node = self.root
         return count
+

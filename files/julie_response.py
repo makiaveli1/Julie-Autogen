@@ -1,17 +1,11 @@
-
-from openai import ChatCompletion
 import logging
-from collections import defaultdict
-from files.julie_environment import load_environment_variables
-from files.julie_startup import display_initial_message, simulate_startup
-from files.julie_intent_detection import detect_intent_with_gpt, detect_intent, detect_language
+from files.autogeen import Julie, user_proxy, chatbot
 from files.brain import LongTermMemory
 from files.setup import Setting
-from files.code_creater import CodeCreator
-from interpreter.code_interpreters.create_code_interpreter import create_code_interpreter
 import traceback
 import random
 import logging
+import re
 from termcolor import colored
 
 
@@ -27,85 +21,99 @@ logging.getLogger('interpreter').setLevel(logging.CRITICAL)
 logging.getLogger('markdown_it').setLevel(logging.CRITICAL)
 
 
-
-
 class JulieResponse:
     def __init__(self):
+        self.messages = []
         pass
-    
+
     def handle_exception(self, e):
         return random.choice(Setting.custom_error_messages.get(
             type(e).__name__, ["Unknown Error"]
         ))
-    
+
+    def sanitize_code(code, language):
+        """
+        Sanitize the code to prevent malicious activities.
+        This function is tailored for multiple languages.
+        """
+        # Define blacklists for each language
+        blacklists = {
+            'python': ['import', 'exec', 'eval', 'os.', 'subprocess.', 'input', 'open', 'write', 'del', 'rm', 'sys.'],
+            'javascript': ['eval', 'Function', 'setTimeout', 'setInterval'],
+            'shell': ['rm', 'sudo', '>', '>>'],
+            'bash': ['rm', 'sudo', '>', '>>'],
+            'applescript': ['do shell script', 'delete', 'erase'],
+            'r': ['system', 'unlink', 'shell']
+        }
+
+        # Remove comments based on the language
+        if language in ['python', 'javascript', 'r']:
+            code = re.sub(r'#.*', '', code)  # Remove Python, R comments
+            code = re.sub(r'//.*', '', code)  # Remove JavaScript comments
+        elif language in ['shell', 'bash']:
+            code = re.sub(r'#.*', '', code)  # Remove Shell, Bash comments
+        elif language == 'applescript':
+            code = re.sub(r'--.*', '', code)  # Remove AppleScript comments
+
+        # Remove string literals to avoid false positives
+        code = re.sub(r'".*?"', '', code)
+        code = re.sub(r"'.*?'", '', code)
+
+        # Check for blacklisted keywords
+        for keyword in blacklists.get(language, []):
+            if keyword in code:
+                raise ValueError(f"Malicious code detected: {keyword}")
+
+        # Additional sanitization logic can go here
+
+        return code
+
     def generate_response(self, prompt, username, api_key, max_tokens=200, temperature=0.7):
         try:
-            logging.info(f"Entered generate_response with prompt: {prompt}, username: {username}")
-            
+            logging.info(f"Starting generate_response function with prompt: {prompt}, username: {username}")
+
             # Initialize LongTermMemory and fetch user data
+            logging.info("Initializing LongTermMemory...")
             memory = LongTermMemory()
             user_data = memory.get_user_data(username)
             memory.update_conversation_history(username, "user", prompt)
-            intermediate_response = None
+            advanced_prompt = self.prepare_advanced_prompt(prompt, username, user_data)
+            
+            # Extract the 'content' field from each dictionary in the list
+            advanced_prompt_str = '\n'.join([item['content'] for item in advanced_prompt])
+            
+            # Concatenate it to the original prompt
+            prompt += advanced_prompt_str
 
-            intent = detect_intent_with_gpt(prompt)
-            language = detect_language(prompt) if intent == "code_execution" or intent == "web_search" else None
+            # Initialize AutoGen UserProxyAgent
+            logging.info("Initializing AutoGen UserProxyAgent...")
+            user_proxy.initiate_chat(
+                Julie,
+                message=prompt,
+            )
 
-            if intent == "code_execution" or intent == "web_search":
-                code_creator = CodeCreator(api_key)
-                generated_code = code_creator.generate_code(intent, language)
-                code_interpreter = create_code_interpreter(language)
-                
-                for output in code_interpreter.run(generated_code):
-                    intermediate_response = output.get('output', 'No response')
+            # Fetch AutoGen response
+            logging.info("Fetching AutoGen response...")
+            chatbot_response = user_proxy.get_response()  # Using the new get_response method
 
-            if intermediate_response:
-                prompt = f"{prompt}\n{intermediate_response}"
-
-            logging.info(f"Generating response for {username}...")
-            if not user_data:
-                user_data = {"conversation_history": []}
-                memory.set_user_data(username, user_data)
-
-            user_data["conversation_history"].append({"role": "user", "content": prompt})
-
-            if len(user_data["conversation_history"]) > 5000:
-                user_data["conversation_history"] = user_data["conversation_history"][-5000:]
-
-            messages = self.prepare_advanced_prompt(prompt, username, user_data)
-
-            cached_response = memory.get_cached_response(prompt)
-            if cached_response:
-                chatbot_response = cached_response
-            else:
-                response = ChatCompletion.create(
-                    model="gpt-4",
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-
-                chatbot_response = response["choices"][0]["message"]["content"].strip()
-                logging.info(f"Generated response: {chatbot_response}")
-                memory.set_cached_response(prompt, chatbot_response)
-
-            logging.info(f"Generated response: {chatbot_response}")
-
+            # Update conversation history with assistant's response
+            logging.info(f"Updating conversation history with assistant's response: {chatbot_response}")
             memory.update_conversation_history(username, "assistant", chatbot_response)
             user_data["conversation_history"].append({"role": "assistant", "content": chatbot_response})
+            
+            logging.info("Updating user data...")
             memory.set_user_data(username, user_data)
 
         except Exception as e:
             logging.error(f"Unexpected Error: {e}")
-            logging.error("Exception type: {}".format(type(e)))
-            logging.error("Traceback: {}".format(traceback.format_exc()))
+            logging.error(f"Exception type: {type(e)}")
+            logging.error(f"Traceback: {traceback.format_exc()}")
             chatbot_response = self.handle_exception(e)
 
         finally:
-            logging.info("Exiting generate_response")
+            logging.info("Exiting generate_response function")
 
         return chatbot_response
-
 
     def prepare_advanced_prompt(self, prompt, username, user_data):
         """
